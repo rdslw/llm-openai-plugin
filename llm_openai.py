@@ -57,6 +57,11 @@ def register_models(register):
         # GPT-5 Pro, 6th October 2025
         "gpt-5-pro": {"vision": True, "reasoning": True},
         "gpt-5-pro-2025-10-06": {"vision": True, "reasoning": True},
+        # GPT-5.1, November 2025
+        "gpt-5.1": {"vision": True, "reasoning": True},
+        "gpt-5.1-chat-latest": {"vision": True, "reasoning": True},
+        "gpt-5.1-codex": {"vision": True, "reasoning": True},
+        "gpt-5.1-codex-mini": {"vision": True, "reasoning": True},
     }
     for model_id, options in models.items():
         register(
