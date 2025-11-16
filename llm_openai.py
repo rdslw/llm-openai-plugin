@@ -156,6 +156,44 @@ class ReasoningOptions(Options):
     )
 
 
+class PlatformToolsOptions(Options):
+    openai_tools: Optional[str] = Field(
+        description=(
+            "Comma-separated list of OpenAI platform tools to enable (e.g., 'web_search'). "
+            "These are tools provided by OpenAI's API, not user-defined tools."
+        ),
+        default=None,
+    )
+    web_search_domains: Optional[str] = Field(
+        description=(
+            "Comma-separated list of allowed domains for web_search tool (up to 20). "
+            "Example: 'openai.com,wikipedia.org'. Omit http/https prefix."
+        ),
+        default=None,
+    )
+    web_search_live: Optional[bool] = Field(
+        description=(
+            "Enable live internet access for web_search. If False, uses only cached/indexed results. "
+            "Default is true (live access) if you do not set it (and is missing from request)."
+        ),
+        default=None,
+    )
+    web_search_context_size: Optional[str] = Field(
+        description=(
+            "Private search_context_size parameter. TBD how it works, tested with 'low', 'medium' and 'high'."
+            "Default is 'medium' (whatever it means) if you do not set it (and is missing from request)."
+        ),
+        default=None,
+    )
+    web_search_sources: Optional[bool] = Field(
+        description=(
+            "Include all URLs retrieved during web search in the sources field. "
+            "When enabled, adds 'web_search_call.action.sources' to the include parameter."
+        ),
+        default=None,
+    )
+
+
 class _SharedResponses:
     needs_key = "openai"
     key_env_var = "OPENAI_API_KEY"
@@ -170,7 +208,7 @@ class _SharedResponses:
         self.model_name = model_name
         self.can_stream = streaming
         self.supports_schema = schemas
-        options = [BaseOptions]
+        options = [BaseOptions, PlatformToolsOptions]
         self.vision = vision
         if vision:
             self.attachment_types = {
@@ -291,8 +329,39 @@ class _SharedResponses:
             if value is not None:
                 kwargs[option] = value
 
+        # Handle platform tools (e.g., web_search) and user-defined tools
+        all_tools = []
+
+        # Add platform tools from options
+        openai_tools = getattr(prompt.options, "openai_tools", None)
+        if openai_tools:
+            openai_tools = [t.strip() for t in openai_tools.split(",") if t.strip()]
+            for tool_name in openai_tools:
+                tool_config = {"type": tool_name}
+
+                # Configure web_search tool if specified
+                if tool_name == "web_search":
+                    # Add allowed domains filter
+                    domains = getattr(prompt.options, "web_search_domains", None)
+                    if domains:
+                        domain_list = [d.strip() for d in domains.split(",") if d.strip()]
+                        if domain_list:
+                            tool_config["filters"] = {"allowed_domains": domain_list}
+
+                    # defines context_size for web searches
+                    context_size = getattr(prompt.options, "web_search_context_size", None)
+                    if context_size:
+                        tool_config["search_context_size"] = context_size
+
+                    # Add live web access setting
+                    live_access = getattr(prompt.options, "web_search_live", None)
+                    if live_access:
+                        tool_config["external_web_access"] = live_access
+
+                all_tools.append(tool_config)
+
+        # Add user-defined tools (llm framework tools)
         if prompt.tools:
-            tool_defs = []
             for tool in prompt.tools:
                 if not getattr(tool, "name", None):
                     continue
@@ -300,7 +369,7 @@ class _SharedResponses:
                     "type": "object",
                     "properties": {},
                 }
-                tool_defs.append(
+                all_tools.append(
                     {
                         "type": "function",
                         "name": tool.name,
@@ -309,8 +378,17 @@ class _SharedResponses:
                         "strict": False,
                     }
                 )
-            if tool_defs:
-                kwargs["tools"] = tool_defs
+
+        if all_tools:
+            kwargs["tools"] = all_tools
+
+        # Handle web_search_sources option
+        if getattr(prompt.options, "web_search_sources", None):
+            if "include" not in kwargs:
+                kwargs["include"] = []
+            if "web_search_call.action.sources" not in kwargs["include"]:
+                kwargs["include"].append("web_search_call.action.sources")
+
         if self.supports_schema and prompt.schema:
             kwargs["text"] = {
                 "format": {
